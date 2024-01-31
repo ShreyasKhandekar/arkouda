@@ -52,24 +52,32 @@ module ArkoudaSymEntryCompat {
     :arg etype: type to be instantiated
     :type etype: type
   */
-  proc SymEntry.init(args: int ...?N, type etype) {
+  proc SymEntry.init(args: int ...?N, type etype, onGpu: bool = false) {
     var len = 1;
     for param i in 0..#N {
       len *= args[i];
     }
+    writeln("Created an Array gt-132................................ SSSSSSSSSSSS, len = ", len, "etyp = ", etype:string, " onGpu = ", onGpu:string);
     super.init(etype, len, N);
     this.entryType = SymbolEntryType.PrimitiveTypedArraySymEntry;
     assignableTypes.add(this.entryType);
-
-    this.etype = etype;
-    this.dimensions = N;
-    this.tupShape = args;
-    this.a = try! makeDistArray((...args), etype);
+      this.etype = etype;
+      this.dimensions = N;
+      this.tupShape = args;
+    // var loc = if onGpu then here.gpus[0] else here;
+    // on loc {
+      this.a = try! makeDistArray((...args), etype);
+    // }
     init this;
     this.shape = tupShapeString(this.tupShape);
     // commented out for perf reasons, needs further investigation
     // this.ndim = N;
   }
+
+    proc SymEntry.init(args: int ...?N, type etype) {
+      this.init((...args), etype, onGpu=false);
+    }
+
 
   /*
     This init takes an array whose type matches `makeDistArray()`

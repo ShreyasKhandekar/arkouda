@@ -60,10 +60,17 @@ module GpuMsg
             when DType.UInt64 {
                 var entry = toSymEntry(gEnt,uint);
 
-                var aV = times2(entry.a);
-                st.addEntry(vName, createSymEntry(aV));
-
-                repMsg = "created " + st.attrib(vName);
+                times2Class(entry);
+                times2(entry.a);
+                // st.addEntry(vName, createSymEntry(aV));
+                // ref arr = entry.a;
+                on here.gpus[0]{
+                    foreach i in entry.a.domain {
+                        entry.a[i] = entry.a[i] * 2;
+                    }
+                }
+                // repMsg = "created " + st.attrib(vName);
+                repMsg = "times2 done";
                 asLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),repMsg);
                 return new MsgTuple(repMsg, MsgType.NORMAL);
             }

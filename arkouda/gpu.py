@@ -55,7 +55,8 @@ def times2(pda: pdarray) -> pdarray:
   if pda.dtype not in supported_dtypes:
         raise ValueError(f"ak.times2 does not support {pda.dtype}")
   repMsg = generic_msg(cmd="times2", args={"array": pda})
-  return create_pdarray(repMsg)
+#   return create_pdarray(repMsg)
+  return repMsg
 
 @typechecked
 def gpuScan(pda: pdarray) -> pdarray:
@@ -94,12 +95,14 @@ def gpuScan(pda: pdarray) -> pdarray:
     >>> ak.gpuScan(a)
     array([0 5 8 15 22 27 36 36 41 50])
     """
+    if not pda.on_gpu:
+        raise ValueError("ak.gpuScan only works on GPU arrays")
     if pda.dtype not in numeric_dtypes:
         raise ValueError(f"ak.gpuScan supports int64, uint64, or float64, not {pda.dtype}")
     if pda.size == 0:
         return zeros(0, dtype=pda.dtype)
     repMsg = generic_msg(cmd="gpuScan", args={"array": pda})
-    return create_pdarray(cast(str, repMsg))
+    return repMsg
 
 @typechecked
 def gpuSort(pda: pdarray) -> pdarray:

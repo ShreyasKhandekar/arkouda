@@ -5,22 +5,36 @@ includes scan and sort
  */
 module Gpu
 {
+  use MultiTypeSymEntry;
   import GPU;
-  import GpuSort;
 
-  proc times2(ref arr: [] uint) throws {
-    var a = arr;
-    on here.gpus[0]{
-      var b = a;
-      foreach i in b.domain {
-        b[i] = b[i] * 2;
+  proc times2Class(ref e: SymEntry(?)) {
+    on here.gpus[0] {
+      foreach i in e.a.domain {
+        e.a[i] = e.a[i] * 2;
       }
-      a = b;
     }
-    return a;
+    writeln("Executing Times 2");
   }
 
-  proc gpuScanWrapper(ref arr: []?t) throws {
+  proc times2(arr: [?D] uint) {
+
+    on here.gpus[0] {
+      // var a = arr;
+      writeln("Executing where arr is stored, which is locale #", here);
+      writeln(arr[0]);
+
+      // var b = arr;
+      foreach i in arr.domain {
+        arr[i] = arr[i] * 2;
+      }
+      // arr = b;
+    }
+    // return arr;
+    // return a;
+  }
+
+  proc gpuScanWrapper(ref arr: []?t) {
     var a = arr;
     on here.gpus[0]{
       var b = a;
@@ -30,11 +44,11 @@ module Gpu
     return a;
   }
 
-  proc gpuSortWrapper(ref arr: [] uint) throws {
+  proc gpuSortWrapper(ref arr: [] uint) {
     var a = arr;
     on here.gpus[0]{
       var b = a;
-      GpuSort.sort(b);
+      GPU.gpuSort(b);
       a = b;
     }
     return a;

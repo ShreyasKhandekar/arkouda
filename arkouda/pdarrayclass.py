@@ -189,6 +189,7 @@ class pdarray:
         shape: Sequence[int],
         itemsize: int_scalars,
         max_bits: Optional[int] = None,
+        on_gpu: bool = False,
     ) -> None:
         self.name = name
         self.dtype = dtype(mydtype)
@@ -196,6 +197,7 @@ class pdarray:
         self.ndim = ndim
         self.shape = shape
         self.itemsize = itemsize
+        self.on_gpu = on_gpu
         if max_bits:
             self.max_bits = max_bits
 
@@ -2093,6 +2095,7 @@ def create_pdarray(repMsg: str, max_bits=None) -> pdarray:
     """
     try:
         fields = repMsg.split()
+        print(fields)
         name = fields[1]
         mydtype = fields[2]
         size = int(fields[3])

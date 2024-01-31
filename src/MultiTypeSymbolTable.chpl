@@ -60,14 +60,22 @@ module MultiTypeSymbolTable
 
             :returns: borrow of newly created `SymEntry(t)`
         */
-        proc addEntry(name: string, shape: int ...?N, type t): borrowed SymEntry(t, N) throws {
+        proc addEntry(name: string, shape: int ...?N, type t, onGpu: bool = false): borrowed SymEntry(t, N) throws {
             // check and throw if memory limit would be exceeded
             // TODO figure out a way to do memory checking for bigint
             if t != bigint {
                 const len = * reduce shape;
                 if t == bool {overMemLimit(len);} else {overMemLimit(len*numBytes(t));}
             }
-            var entry = new shared SymEntry((...shape), t);
+            var loc = if onGpu then here.gpus[0] else here;
+            type shSymEntry = shared SymEntry?;
+            var testentry = new shSymEntry((...shape), t);
+            var entry : testentry.type; // Make sure it's not generic
+            on loc {
+                var entry = new shared SymEntry((...shape), t, onGpu);
+                tab.addOrReplace(name, entry);
+                entry.setName(name);
+            }
             if (tab.contains(name)) {
                 mtLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),
                                                         "redefined symbol: %s ".doFormat(name));
@@ -76,12 +84,16 @@ module MultiTypeSymbolTable
                                                         "adding symbol: %s ".doFormat(name));
             }
 
-            tab.addOrReplace(name, entry);
-            entry.setName(name);
+            
             // When we retrieve from table, it comes back as AbstractSymEntry so we need to cast it
             // back to the original type. Since we know it already we can skip isAssignableTo check
             return (tab[name]:borrowed GenSymEntry).toSymEntry(t, N);
         }
+
+        proc addEntry(name: string, shape: int ...?N, type t): borrowed SymEntry(t, N) throws {
+            return addEntry(name, (...shape), t, false);
+        }
+
 
         proc addEntry(name: string, shape: ?ND*int, type t): borrowed SymEntry(t, ND) throws
             do return addEntry(name, (...shape), t);
@@ -133,13 +145,13 @@ module MultiTypeSymbolTable
 
         :returns: borrow of newly created GenSymEntry
         */
-        proc addEntry(name: string, shape: int ...?ND, dtype: DType): borrowed AbstractSymEntry throws {
+        proc addEntry(name: string, shape: int ...?ND, dtype: DType, onGpu: bool = false): borrowed AbstractSymEntry throws {
             select dtype {
-                when DType.Int64 { return addEntry(name, (...shape), int); }
-                when DType.UInt64 { return addEntry(name, (...shape), uint); }
-                when DType.Float64 { return addEntry(name, (...shape), real); }
-                when DType.Bool { return addEntry(name, (...shape), bool); }
-                when DType.BigInt { return addEntry(name, (...shape), bigint); }
+                when DType.Int64 { return addEntry(name, (...shape), int, onGpu); }
+                when DType.UInt64 { return addEntry(name, (...shape), uint, onGpu); }
+                when DType.Float64 { return addEntry(name, (...shape), real, onGpu); }
+                when DType.Bool { return addEntry(name, (...shape), bool, onGpu); }
+                when DType.BigInt { return addEntry(name, (...shape), bigint, onGpu); }
                 otherwise {
                     var errorMsg = "addEntry not implemented for %?".doFormat(dtype);
                     throw getErrorWithContext(
@@ -150,6 +162,10 @@ module MultiTypeSymbolTable
                         errorClass="IllegalArgumentError");
                 }
             }
+        }
+
+        proc addEntry(name: string, shape: int ...?ND, dtype: DType): borrowed AbstractSymEntry throws {
+            return addEntry(name, (...shape), dtype, false);
         }
 
         proc addEntry(name: string, shape: ?ND*int, dtype: DType): borrowed AbstractSymEntry throws

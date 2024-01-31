@@ -444,6 +444,7 @@ def ones(
     size: Union[int_scalars, str],
     dtype: Union[np.dtype, type, str, BigInt] = float64,
     max_bits: Optional[int] = None,
+    on_gpu: bool = False,
 ) -> pdarray:
     """
     Create a pdarray filled with ones.
@@ -490,8 +491,9 @@ def ones(
     # check dtype for error
     if dtype_name not in NumericDTypes:
         raise TypeError(f"unsupported dtype {dtype}")
-    repMsg = generic_msg(cmd="create1D", args={"dtype": dtype_name, "shape": size})
+    repMsg = generic_msg(cmd="create1D", args={"dtype": dtype_name, "shape": size, "on_gpu": on_gpu})
     a = create_pdarray(repMsg)
+    a.on_gpu = on_gpu
     a.fill(1)
     if max_bits:
         a.max_bits = max_bits

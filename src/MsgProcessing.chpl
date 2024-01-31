@@ -1,6 +1,7 @@
 
 module MsgProcessing
 {
+    use GpuDiagnostics;
     use ServerConfig;
 
     use Reflection;
@@ -37,6 +38,7 @@ module MsgProcessing
     proc createMsg(cmd: string, msgArgs: borrowed MessageArgs, st: borrowed SymTab, param nd: int): MsgTuple throws {
         const dtype = str2dtype(msgArgs.getValueOf("dtype")),
               shape = msgArgs.get("shape").getTuple(nd),
+              onGpu = msgArgs.get("on_gpu").getBoolValue(),
               rname = st.nextName();
 
         var size = 1;
@@ -51,7 +53,7 @@ module MsgProcessing
             "cmd: %s dtype: %s size: %i new pdarray name: %s".doFormat(
                                                      cmd,dtype2str(dtype),size,rname));
         // create and add entry to symbol table
-        st.addEntry(rname, (...shape), dtype);
+        st.addEntry(rname, (...shape), dtype, onGpu);
         // if verbose print result
         mpLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),
                                     "created the pdarray %s".doFormat(st.attrib(rname)));
@@ -402,7 +404,14 @@ module MsgProcessing
             when (DType.UInt64, DType.UInt64) {
                 var e = toSymEntry(gEnt,uint, nd);
                 var val: uint = value.getUIntValue();
-                e.a = val;
+                startVerboseGpu();
+                on here.gpus[0] {
+                    foreach i in e.a.domain do
+                        e.a[i] = val;
+                    // e.a=val;
+                }
+                stopVerboseGpu();
+                writeln(e.a);
                 repMsg = "set %s to %?".doFormat(name, val);
             }
             when (DType.BigInt, DType.BigInt) {
