@@ -374,11 +374,15 @@ ifeq ($(shell expr $(CHPL_MINOR) \= 0),1)
 	ARKOUDA_COMPAT_MODULES += -M $(ARKOUDA_SOURCE_DIR)/compat/eq-20
 endif
 
-ifeq ($(shell expr $(CHPL_MINOR) \> 0),1)
-	ARKOUDA_COMPAT_MODULES += -M $(ARKOUDA_SOURCE_DIR)/compat/ge-21
+ifeq ($(shell expr $(CHPL_MINOR) \= 1),1)
+	ARKOUDA_COMPAT_MODULES += -M $(ARKOUDA_SOURCE_DIR)/compat/eq-21
 endif
 
-ifeq ($(shell expr $(CHPL_MINOR) \>= 0),1)
+ifeq ($(shell expr $(CHPL_MINOR) \>= 2),1)
+	ARKOUDA_COMPAT_MODULES += -M $(ARKOUDA_SOURCE_DIR)/compat/ge-22
+endif
+
+ifeq ($(shell expr $(CHPL_MINOR) \<= 1),1)
 	ARKOUDA_RW_DEFAULT_FLAG := -sOpenReaderLockingDefault=false -sOpenWriterLockingDefault=false
 endif
 
@@ -531,15 +535,12 @@ $(eval $(call create_help_target,test-help,TEST_HELP_TEXT))
 .PHONY: test
 test: test-python
 
-.PHONY: test-proto
-test-proto: test-python-proto
-
 .PHONY: test-chapel
 test-chapel:
 	start_test $(TEST_SOURCE_DIR)
 
 .PHONY: test-all
-test-all: test-python test-python-proto test-chapel
+test-all: test-python test-chapel
 
 mypy:
 	python3 -m mypy arkouda
@@ -552,14 +553,11 @@ $(TEST_TARGETS): $(TEST_BINARY_DIR)/$(TEST_BINARY_SIGIL)%: $(TEST_SOURCE_DIR)/%.
 	$(CHPL) $(TEST_CHPL_FLAGS) -M $(ARKOUDA_SOURCE_DIR) $(ARKOUDA_COMPAT_MODULES) $< -o $@
 
 print-%:
-	$(info $($*)) @true
-
-test-python:
-	python3 -m pytest $(ARKOUDA_PYTEST_OPTIONS) -c pytest.ini
+	$(info $($*)) @trues
 
 size=100
-test-python-proto:
-	python3 -m pytest -c pytest_PROTO.ini PROTO_tests/ --size=$(size) $(ARKOUDA_PYTEST_OPTIONS)
+test-python:
+	python3 -m pytest -c pytest.ini --size=$(size) $(ARKOUDA_PYTEST_OPTIONS)
 
 CLEAN_TARGETS += test-clean
 .PHONY: test-clean

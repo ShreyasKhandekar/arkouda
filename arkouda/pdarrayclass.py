@@ -10,13 +10,13 @@ import numpy as np
 from typeguard import typechecked
 
 from arkouda.client import generic_msg
-from arkouda.dtypes import NUMBER_FORMAT_STRINGS, DTypes, bigint
-from arkouda.dtypes import bool_ as akbool
-from arkouda.dtypes import dtype, get_byteorder
-from arkouda.dtypes import float64 as akfloat64
-from arkouda.dtypes import get_server_byteorder
-from arkouda.dtypes import int64 as akint64
-from arkouda.dtypes import (
+from arkouda.numpy.dtypes import NUMBER_FORMAT_STRINGS, DTypes, bigint
+from arkouda.numpy.dtypes import bool_ as akbool
+from arkouda.numpy.dtypes import dtype
+from arkouda.numpy.dtypes import float64 as akfloat64
+from arkouda.numpy.dtypes import get_byteorder, get_server_byteorder
+from arkouda.numpy.dtypes import int64 as akint64
+from arkouda.numpy.dtypes import (
     int_scalars,
     isSupportedInt,
     isSupportedNumber,
@@ -25,9 +25,8 @@ from arkouda.dtypes import (
     numpy_scalars,
     resolve_scalar_dtype,
 )
-from arkouda.dtypes import str_ as akstr_
-from arkouda.dtypes import translate_np_dtype
-from arkouda.dtypes import uint64 as akuint64
+from arkouda.numpy.dtypes import str_ as akstr_
+from arkouda.numpy.dtypes import uint64 as akuint64
 from arkouda.infoclass import information, pretty_print_information
 from arkouda.logger import getArkoudaLogger
 
@@ -112,9 +111,9 @@ def parse_single_value(msg: str) -> object:
         else:
             return int(value)
     if mydtype == akbool:
-        if value == "True":
+        if value == "True" or value == "true":
             return mydtype.type(True)
-        elif value == "False":
+        elif value == "False" or value == "false":
             return mydtype.type(False)
         else:
             raise ValueError(f"unsupported value from server {mydtype.name} {value}")
@@ -182,12 +181,13 @@ def _slice_index(array: pdarray, starts: List[int], stops: List[int], strides: L
     """
     return create_pdarray(
         generic_msg(
-            cmd=f"[slice]{array.ndim}D",
+            cmd=f"[slice]<{array.dtype},{array.ndim}>",
             args={
                 "array": array,
                 "starts": tuple(starts) if array.ndim > 1 else starts[0],
                 "stops": tuple(stops) if array.ndim > 1 else stops[0],
                 "strides": tuple(strides) if array.ndim > 1 else strides[0],
+                "max_bits": array.max_bits if array.max_bits is not None else 0,
             },
         )
     )
@@ -220,8 +220,7 @@ def _parse_index_tuple(key, shape):
                 slices.append((k, k + 1, 1))
         elif isinstance(k, pdarray):
             pdarray_axes.append(dim)
-            kind, _ = translate_np_dtype(k.dtype)
-            if kind not in ("bool", "int", "uint"):
+            if k.dtype not in ("bool", "int", "uint"):
                 raise TypeError(f"unsupported pdarray index type {k.dtype}")
             # select all indices (needed for mixed slice+pdarray indexing)
             slices.append((0, shape[dim], 1))
@@ -296,8 +295,8 @@ def _to_pdarray(value: np.ndarray, dt=None) -> pdarray:
         value_flat = value.flatten()
         return create_pdarray(
             generic_msg(
-                cmd=f"array{value.ndim}D",
-                args={"dtype": _dtype, "shape": np.shape(value), "seg_string": False},
+                cmd=f"array<{_dtype},{value.ndim}>",
+                args={"shape": np.shape(value)},
                 payload=_array_memview(value_flat),
                 send_binary=True,
             )
@@ -495,7 +494,7 @@ class pdarray:
                 other = int(other)
         except Exception:
             raise TypeError(f"Unable to convert {other} to {self.dtype.name}")
-        if self.dtype == bool:
+        if self.dtype == "bool_":
             return str(other)
         fmt = NUMBER_FORMAT_STRINGS[self.dtype.name]
         return fmt.format(other)
@@ -743,13 +742,13 @@ class pdarray:
     def __eq__(self, other):
         if other is None:
             return False
-        elif (self.dtype == bool) and (isinstance(other, pdarray) and (other.dtype == bool)):
+        elif (self.dtype == "bool_") and (isinstance(other, pdarray) and (other.dtype == "bool_")):
             return ~(self ^ other)
         else:
             return self._binop(other, "==")
 
     def __ne__(self, other):
-        if (self.dtype == bool) and (isinstance(other, pdarray) and (other.dtype == bool)):
+        if (self.dtype == "bool_") and (isinstance(other, pdarray) and (other.dtype == "bool_")):
             return self ^ other
         else:
             return self._binop(other, "!=")
@@ -764,7 +763,7 @@ class pdarray:
             return self._binop(~0, "^")
         if self.dtype == akuint64:
             return self._binop(~np.uint(0), "^")
-        if self.dtype == bool:
+        if self.dtype == "bool_":
             return self._binop(True, "^")
         raise TypeError(f"Unhandled dtype: {self} ({self.dtype})")
 
@@ -773,7 +772,7 @@ class pdarray:
         """
         Return a string of the type inferred from the values.
         """
-        from arkouda.dtypes import float_scalars, int_scalars
+        from arkouda.numpy.dtypes import float_scalars, int_scalars
         from arkouda.util import _is_dtype_in_union
 
         if _is_dtype_in_union(self.dtype, int_scalars):
@@ -797,7 +796,10 @@ class pdarray:
         # pdarray binop scalar
         # opeq requires scalar to be cast as pdarray dtype
         try:
-            other = self.dtype.type(other)
+            if self.dtype != bigint:
+                other = np.array([other]).astype(self.dtype)[0]
+            else:
+                other = self.dtype.type(other)
         except Exception:
             # Can't cast other as dtype of pdarray
             raise TypeError(f"Unhandled scalar type: {other} ({type(other)})")
@@ -869,27 +871,26 @@ class pdarray:
                 key += self.size
             if key >= 0 and key < self.size:
                 repMsg = generic_msg(
-                    cmd="[int]1D",
+                    cmd=f"[int]<{self.dtype},1>",
                     args={
                         "array": self,
                         "idx": key,
                     },
                 )
-                fields = repMsg.split()
-                # value = fields[2]
-                return parse_single_value(" ".join(fields[1:]))
+                return parse_single_value(repMsg)
             else:
                 raise IndexError(f"[int] {orig_key} is out of bounds with size {self.size}")
 
         if self.ndim == 1 and isinstance(key, slice):
             (start, stop, stride) = key.indices(self.size)
             repMsg = generic_msg(
-                cmd="[slice]1D",
+                cmd=f"[slice]<{self.dtype},1>",
                 args={
                     "array": self,
                     "starts": start,
                     "stops": stop,
                     "strides": stride,
+                    "max_bits": self.max_bits if self.max_bits is not None else 0,
                 },
             )
             return create_pdarray(repMsg)
@@ -906,14 +907,13 @@ class pdarray:
             if len(scalar_axes) == len(clean_key):
                 # all scalars: use simpler indexing (and return a scalar)
                 repMsg = generic_msg(
-                    cmd=f"[int]{self.ndim}D",
+                    cmd=f"[int]<{self.dtype},{self.ndim}>",
                     args={
                         "array": self,
                         "idx": clean_key,
                     },
                 )
-                fields = repMsg.split()
-                ret_array = parse_single_value(" ".join(fields[1:]))
+                ret_array = parse_single_value(repMsg)
 
             elif len(pdarray_axes) > 0:
                 if len(pdarray_axes) == len(clean_key):
@@ -931,11 +931,17 @@ class pdarray:
                     # pdarray dimensions are squeezed out
                     degen_axes = pdarray_axes[1:] + scalar_axes
 
+                # ensure all indexing arrays have the same dtype (either int64 or uint64)
+                idx_dtype = clean_key[pdarray_axes[0]].dtype
+                for dim in pdarray_axes:
+                    if clean_key[dim].dtype != idx_dtype:
+                        raise TypeError("all pdarray indices must have the same dtype")
+
                 # apply pdarray indexing (returning an ndim array with degenerate dimensions
                 # along all the indexed axes except the first one)
                 temp2 = create_pdarray(
                     generic_msg(
-                        cmd=f"[pdarray]x{self.ndim}D",
+                        cmd=f"[pdarray]<{self.dtype},{idx_dtype},{self.ndim}>",
                         args={
                             "array": temp1,
                             "nIdxArrays": len(pdarray_axes),
@@ -979,10 +985,9 @@ class pdarray:
                 return ret_array
 
         if isinstance(key, pdarray) and self.ndim == 1:
-            kind, _ = translate_np_dtype(key.dtype)
-            if kind not in ("bool", "int", "uint"):
+            if key.dtype not in ("bool", "int", "uint"):
                 raise TypeError(f"unsupported pdarray index type {key.dtype}")
-            if kind == "bool" and self.size != key.size:
+            if key.dtype == "bool" and self.size != key.size:
                 raise ValueError(f"size mismatch {self.size} {key.size}")
             repMsg = generic_msg(
                 cmd="[pdarray]",
@@ -1021,12 +1026,12 @@ class pdarray:
                     key += self.size
                 if key >= 0 and key < self.size:
                     generic_msg(
-                        cmd="[int]=val-1D",
+                        cmd=f"[int]=val<{self.dtype},1>",
                         args={
                             "array": self,
                             "idx": key,
-                            "dtype": self.dtype,
                             "value": self.format_other(_value),
+                            "max_bits": self.max_bits if self.max_bits is not None else 0,
                         },
                     )
                 else:
@@ -1051,7 +1056,7 @@ class pdarray:
                 logger.debug(f"start: {start} stop: {stop} stride: {stride}")
                 if isinstance(_value, pdarray):
                     generic_msg(
-                        cmd="[slice]=pdarray-1D",
+                        cmd=f"[slice]=pdarray<{self.dtype},{_value.dtype},1>",
                         args={
                             "array": self,
                             "starts": start,
@@ -1062,14 +1067,14 @@ class pdarray:
                     )
                 else:
                     generic_msg(
-                        cmd="[slice]=val-1D",
+                        cmd=f"[slice]=val<{self.dtype},1>",
                         args={
                             "array": self,
-                            "start": start,
-                            "stop": stop,
-                            "stride": stride,
-                            "dtype": self.dtype,
+                            "starts": start,
+                            "stops": stop,
+                            "strides": stride,
                             "value": self.format_other(_value),
+                            "max_bits": self.max_bits if self.max_bits is not None else 0,
                         },
                     )
             else:
@@ -1154,7 +1159,7 @@ class pdarray:
                         )
 
                     generic_msg(
-                        cmd=f"[slice]=pdarray-{self.ndim}D",
+                        cmd=f"[slice]=pdarray<{self.dtype},{_value_r.dtype},{self.ndim}>",
                         args={
                             "array": self,
                             "starts": tuple(starts),
@@ -1166,24 +1171,24 @@ class pdarray:
                 elif all_scalar_keys:
                     # use simpler indexing if we got a tuple of only scalars
                     generic_msg(
-                        cmd=f"[int]=val-{self.ndim}D",
+                        cmd=f"[int]=val<{self.dtype},{self.ndim}>",
                         args={
                             "array": self,
                             "idx": key,
-                            "dtype": self.dtype,
                             "value": self.format_other(_value),
+                            "max_bits": self.max_bits if self.max_bits is not None else 0,
                         },
                     )
                 else:
                     generic_msg(
-                        cmd=f"[slice]=val-{self.ndim}D",
+                        cmd=f"[slice]=val<{self.dtype},{self.ndim}>",
                         args={
                             "array": self,
                             "starts": tuple(starts),
                             "stops": tuple(stops),
                             "strides": tuple(strides),
-                            "dtype": self.dtype,
                             "value": self.format_other(_value),
+                            "max_bits": self.max_bits if self.max_bits is not None else 0,
                         },
                     )
             elif isinstance(key, slice):
@@ -1191,7 +1196,7 @@ class pdarray:
                 if key == slice(None):
                     if isinstance(_value, pdarray):
                         generic_msg(
-                            cmd=f"[slice]=pdarray-{self.ndim}D",
+                            cmd=f"[slice]=pdarray<{self.dtype},{_value.dtype},{self.ndim}>",
                             args={
                                 "array": self,
                                 "starts": tuple([0 for _ in range(self.ndim)]),
@@ -1202,14 +1207,14 @@ class pdarray:
                         )
                     else:
                         generic_msg(
-                            cmd=f"[slice]=val-{self.ndim}D",
+                            cmd=f"[slice]=val<{self.dtype},{self.ndim}>",
                             args={
                                 "array": self,
                                 "starts": tuple([0 for _ in range(self.ndim)]),
                                 "stops": tuple(self.shape),
                                 "strides": tuple([1 for _ in range(self.ndim)]),
-                                "dtype": self.dtype,
                                 "value": self.format_other(_value),
+                                "max_bits": self.max_bits if self.max_bits is not None else 0,
                             },
                         )
                 else:
@@ -1822,7 +1827,11 @@ class pdarray:
         # The reply from the server will be binary data
         data = cast(
             memoryview,
-            generic_msg(cmd=f"tondarray{self.ndim}D", args={"array": self}, recv_binary=True),
+            generic_msg(
+                cmd=f"tondarray<{self.dtype},{self.ndim}>",
+                args={"array": self},
+                recv_binary=True
+            ),
         )
         # Make sure the received data has the expected length
         if len(data) != self.size * self.dtype.itemsize:
@@ -2802,7 +2811,7 @@ def prod(pda: pdarray) -> np.float64:
     repMsg = generic_msg(
         cmd=f"reduce{pda.ndim}D", args={"op": "prod", "x": pda, "nAxes": 0, "axis": [], "skipNan": False}
     )
-    return parse_single_value(cast(str, repMsg))
+    return np.float64(parse_single_value(cast(str, repMsg)))
 
 
 def min(pda: pdarray) -> numpy_scalars:

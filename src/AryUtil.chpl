@@ -14,6 +14,8 @@ module AryUtil
     use OS.POSIX;
     use List;
     use CommAggregation;
+    use CommPrimitives;
+
 
     param bitsPerDigit = RSLSD_bitsPerDigit;
     private param numBuckets = 1 << bitsPerDigit; // these need to be const for comms/performance reasons
@@ -258,30 +260,44 @@ module AryUtil
       }
     }
 
-    /*
-      Naively create a domain over a chunk of the input domain
+    // overload for tuple of axes
+    iter axisSlices(D: domain(?), axes: int ...?N): (domain(?), D.rank*int) throws
+      where N <= D.rank
+    {
+      for sliceIdx in domOffAxis(D, (...axes)) {
+        yield (domOnAxis(D, if D.rank == 1 then (sliceIdx,) else sliceIdx, (...axes)), sliceIdx);
+      }
+    }
 
-      Chunks are created by splitting the largest dimension of the input domain
+    iter axisSlices(param tag: iterKind, D: domain(?),  axes: int ...?N): (domain(?), D.rank*int) throws
+      where tag == iterKind.standalone && N <= D.rank
+    {
+      forall sliceIdx in domOffAxis(D, (...axes)) {
+        yield (domOnAxis(D, if D.rank == 1 then (sliceIdx,) else sliceIdx, (...axes)), sliceIdx);
+      }
+    }
+
+    /*
+      Create a domain over a chunk of the input domain
+
+      Chunks are created by splitting the 0th dimension of the input domain
       into 'nChunks' roughly equal-sized chunks, and then taking the
       'chunkIdx'-th chunk
 
-      (if 'nChunks' is greater than the size of the largest dimension, the
+      (if 'nChunks' is greater than the size of the first dimension, the
       first 'nChunks-1' chunks will be empty, and the last chunk will contain
-      the entire set of indices along that dimension)
+      the entire set of indices)
     */
     proc subDomChunk(dom: domain(?), chunkIdx: int, nChunks: int): domain(?) {
-      const dimSizes = [i in 0..<dom.rank] dom.dim(i).size,
-            (maxDim, maxDimIdx) = maxloc reduce zip(dimSizes, dimSizes.domain);
-
-      const chunkSize = maxDim / nChunks,
-            start = chunkIdx * chunkSize + dom.dim(maxDimIdx).low,
+      const chunkSize = dom.dim(0).size / nChunks,
+            start = chunkIdx * chunkSize + dom.dim(0).low,
             end = if chunkIdx == nChunks-1
-              then dom.dim(maxDimIdx).high
-              else (chunkIdx+1) * chunkSize + dom.dim(maxDimIdx).low - 1;
+              then dom.dim(0).high
+              else (chunkIdx+1) * chunkSize + dom.dim(0).low - 1;
 
       var rngs: dom.rank*range;
-      for i in 0..<dom.rank do rngs[i] = dom.dim(i);
-      rngs[maxDimIdx] = start..end;
+      for i in 1..<dom.rank do rngs[i] = dom.dim(i);
+      rngs[0] = start..end;
       return {(...rngs)};
     }
 
@@ -902,7 +918,7 @@ module AryUtil
             // flat region sits within a single locale, do a single get
             get(
               c_ptrTo(unflat[low]),
-              c_ptrToConst(a[flatSlice.low]):c_ptr(t),
+              getAddr(a[flatSlice.low]),
               locInStart,
               c_sizeof(t) * flatSlice.size
             );
@@ -913,7 +929,7 @@ module AryUtil
 
               get(
                 c_ptrTo(unflat[dufc.orderToIndex(flatSubSlice.low)]),
-                c_ptrToConst(a[flatSubSlice.low]):c_ptr(t),
+                getAddr(a[flatSubSlice.low]),
                 locInID,
                 c_sizeof(t) * flatSubSlice.size
               );
@@ -963,7 +979,7 @@ module AryUtil
           if locOutStart == locOutStop {
             // flat region sits within a single locale, do a single put
             put(
-                c_ptrTo(flat[flatSlice.low]),
+                getAddr(flat[flatSlice.low]),
                 c_ptrToConst(a[low]):c_ptr(t),
                 locOutStart,
                 c_sizeof(t) * flatSlice.size
@@ -974,7 +990,7 @@ module AryUtil
               const flatSubSlice = flatSlice[flatLocRanges[locOutID]];
 
               put(
-                c_ptrTo(flat[flatSubSlice.low]),
+                getAddr(flat[flatSubSlice.low]),
                 c_ptrToConst(a[dc.orderToIndex(flatSubSlice.low)]):c_ptr(t),
                 locOutID,
                 c_sizeof(t) * flatSubSlice.size
