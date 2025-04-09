@@ -24,7 +24,7 @@ module UtilMsg {
     see: https://numpy.org/doc/stable/reference/generated/numpy.clip.html
   */
   @arkouda.registerCommand()
-  proc clip(const ref x: [?d] ?t, min: real, max: real): [] t throws 
+  proc clip(const ref x: [?d] ?t, min: real, max: real): [] t throws
     where (t == int) || (t == real) || (t == uint(8)) || (t == uint(64)) {
 
       var y = makeDistArray(d, t);
@@ -50,16 +50,16 @@ module UtilMsg {
   */
 
   @arkouda.registerCommand()
-  proc diff(x: [?d] ?t, n: int, axis: int): [] t throws 
+  proc diff(x: [?d] ?t, n: int, axis: int): [] t throws
     where (t == real) || (t == int) || (t == uint(8)) || (t == uint(64)){
 
     const outDom = subDomain(x.shape, axis, n);
     if n == 1 {
       // 1st order difference: requires no temporary storage
       var y = makeDistArray(outDom, t);
-      for axisSliceIdx in domOffAxis(d, axis) {
+      forall axisSliceIdx in domOffAxis(d, axis) {
         const slice = domOnAxis(outDom, tuplify(axisSliceIdx), axis);
-        for i in slice {
+        forall i in slice {
           var idxp = tuplify(i);
           idxp[axis] += 1;
           y[i] = x[idxp] - x[i];
@@ -88,6 +88,53 @@ module UtilMsg {
       } // d2 deinit here
       return d1[outDom];
     }
+  }
+
+  /*
+  Integrate along the given axis using the composite trapezoidal rule.
+  See https://numpy.org/doc/stable/reference/generated/numpy.trapz.html
+  */
+  // @arkouda.registerCommand()
+  proc trapz(y: [?yDom] ?t, x: [?xDom] t, param axis: int): [] t throws
+    where (t == real) || (t == int) || (t == uint(8)) || (t == uint(64)) {
+
+    // Calculate the 1st order discrete difference along the last(innermost)
+    // axis for x since we want the spacing between the innermost x values
+    var xDiff = diff(x, 1, xDom.rank-1);
+    // The domain of the resulting integral will have rank reduced by 1
+    // The "axis" dimension will be removed
+    const outDom = dropDim(yDom, axis);
+    var yOut = makeDistArray(outDom, t);
+    for axisSliceIdx in domOffAxis(yDom, axis) {
+      const slice = domOnAxis(yDom, tuplify(axisSliceIdx), axis);
+      for i in slice {
+          var idxp = tuplify(i);
+          idxp[axis] += 1;
+          yOut[i] = (y[idxp] + y[i]) * xDiff[i] / 2;
+      }
+    }
+    return yOut;
+  }
+
+  // helper to drop a dimension from a domain
+  proc dropDim(d: domain(?), param axis: int) : domain(?){
+    return d._value.dsiPartialDomain(axis);
+  }
+
+  // Tertiary helper to drop a dimension from a domain
+  proc DefaultRectangularDom.dsiPartialDomain(param exceptDim) where rank > 1 {
+    return {(...ranges.withoutIdx(exceptDim))};
+  }
+
+  // Tertiary helper to drop a dimension from a domain
+  proc BlockDom.dsiPartialDomain(param exceptDim) {
+
+    var ranges = whole._value.ranges.withoutIdx(exceptDim);
+    var space = {(...ranges)};
+    var ret = space dmapped new blockDist(space, targetLocales =
+        dist.targetLocales[(...faceSliceMask(this, exceptDim))]);
+
+    return ret;
   }
 
   // helper to create a domain that's 'n' elements smaller in the 'axis' dimension
